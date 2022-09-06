@@ -2,7 +2,6 @@ package apgjb
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 
 	"github.com/vmware/govmomi/session"
@@ -13,6 +12,7 @@ import (
 type esxClient struct {
 	*vim25.Client
 	SessionManager *session.Manager
+	Userinfo       *url.Userinfo
 }
 
 func (e *esxClient) Login(ctx context.Context, u *url.Userinfo) error {
@@ -32,10 +32,7 @@ func newEsxClient(ctx context.Context, uri, user, pass string) *esxClient {
 	client := &esxClient{
 		Client:         vimClient,
 		SessionManager: session.NewManager(vimClient),
-	}
-	err := client.Login(ctx, u.User)
-	if err != nil {
-		fmt.Println(err)
+		Userinfo:       u.User,
 	}
 	return client
 }
