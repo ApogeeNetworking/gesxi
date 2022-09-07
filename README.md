@@ -1,5 +1,27 @@
 # Apogee ESXi Integration 
 
+### Basic Operations
+1. Instantiate Client
+1. Login Client
+1. Logout Client
+1. Get HostSystem using Api Wrapper
+```go
+esxClient := apgjb.NewJumpbox("esx host/ip", "user", "password")
+if err := esxClient.Login(); err != nil {
+    // Do something besides moving beyond this line
+}
+defer esxClient.Logout()
+// Connecting to a Single ESXi Host
+var host mo.HostSystem
+hosts, err := esxClient.GetHosts()
+if err != nil || len(hosts) != 1 {
+    // Do Something
+}
+host = host[0]
+// Get HostNetworkSystem Reference
+hostNetSysRef := host.ConfigManager.NetworkSystem.Reference()
+```
+
 ### AddPG (add PortGroup)
 1. Get HostNetworkSystemReference (host.ConfigManager.NetworkSystem.Reference())
 1. Create AddPgParams struct
