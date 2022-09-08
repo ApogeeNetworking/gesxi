@@ -95,10 +95,7 @@ type MkDirParams struct {
 
 func (j *Jumpbox) MkDir(p MkDirParams) error {
 	_, err := methods.MakeDirectory(j.ctx, j.EsxiClient.Client, &types.MakeDirectory{
-		This: types.ManagedObjectReference{
-			Type:  "FileManager",
-			Value: "ha-nfc-file-manager",
-		},
+		This:       j.EsxiClient.ServiceContent.FileManager.Reference(),
 		Name:       fmt.Sprintf("[datastore1] %s", p.PathName),
 		Datacenter: p.DcRef,
 	})
@@ -172,6 +169,19 @@ func (j *Jumpbox) GetVmsWithTickets() []ApgVM {
 		vms = append(vms, apgVM)
 	}
 	return vms
+}
+
+func (j *Jumpbox) GetVms() ([]mo.VirtualMachine, error) {
+	view, err := j.getView("VirtualMachine")
+	if err != nil {
+		return nil, err
+	}
+	defer view.Destroy(j.ctx)
+	var vms []mo.VirtualMachine
+	if err = view.Retrieve(j.ctx, []string{"VirtualMachine"}, nil, &vms); err != nil {
+		return nil, err
+	}
+	return vms, nil
 }
 
 func (j *Jumpbox) GetNetworks() {
