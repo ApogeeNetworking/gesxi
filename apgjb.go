@@ -2,11 +2,8 @@ package apgjb
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net/http"
 	"os"
-	"time"
 
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/view"
@@ -125,7 +122,7 @@ type CpFileParams struct {
 }
 
 func (j *Jumpbox) CpFileToDatastore(p CpFileParams) error {
-	file, err := os.Open(p.LocalFilePath + p.FileName)
+	file, err := os.Open(fmt.Sprintf("%s/%s", p.LocalFilePath, p.FileName))
 	if err != nil {
 		return err
 	}
@@ -258,32 +255,4 @@ func (j *Jumpbox) VswitchPost(p VswitchPostParams) error {
 		return err
 	}
 	return nil
-}
-
-type Service struct {
-	http    *http.Client
-	BaseURL string
-}
-
-func newHttpService(host string, jar *http.CookieJar) *Service {
-	return &Service{
-		BaseURL: fmt.Sprintf("https://%s/folder", host),
-		http: &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
-				},
-			},
-			Timeout: 900 * time.Second,
-			Jar:     *jar,
-		},
-	}
-}
-
-func (s *Service) GenerateRequest(method, url string, file *os.File) (*http.Request, error) {
-	return http.NewRequest(method, url, file)
-}
-
-func (s *Service) MakeRequest(req *http.Request) (*http.Response, error) {
-	return s.http.Do(req)
 }
