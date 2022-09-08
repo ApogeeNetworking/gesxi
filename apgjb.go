@@ -2,7 +2,11 @@ package apgjb
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
+	"os"
+	"time"
 
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/view"
@@ -13,6 +17,7 @@ import (
 
 // Jumpbox ...
 type Jumpbox struct {
+	EsxHostIp  string
 	EsxiClient *esxClient
 	ctx        context.Context
 }
@@ -23,7 +28,7 @@ func NewJumpbox(host, user, pass string) *Jumpbox {
 	uri := fmt.Sprintf("https://%s/sdk", host)
 	client := newEsxClient(ctx, uri, user, pass)
 
-	return &Jumpbox{ctx: ctx, EsxiClient: client}
+	return &Jumpbox{ctx: ctx, EsxiClient: client, EsxHostIp: host}
 }
 
 func (j *Jumpbox) Login() error {
@@ -56,6 +61,92 @@ func (j *Jumpbox) GetHosts() ([]mo.HostSystem, error) {
 		return nil, err
 	}
 	return hosts, nil
+}
+
+func (j *Jumpbox) GetDatacenter() (mo.Datacenter, error) {
+	v, err := j.getView("Datacenter")
+	if err != nil {
+		return mo.Datacenter{}, err
+	}
+	defer v.Destroy(j.ctx)
+	var dc mo.Datacenter
+	err = v.Retrieve(j.ctx, []string{"Datacenter"}, nil, &dc)
+	if err != nil {
+		return dc, err
+	}
+	return dc, nil
+}
+
+func (j *Jumpbox) GetDatastore() (mo.Datastore, error) {
+	v, err := j.getView("Datastore")
+	if err != nil {
+		return mo.Datastore{}, err
+	}
+	defer v.Destroy(j.ctx)
+	var dss mo.Datastore
+	err = v.Retrieve(j.ctx, []string{"Datastore"}, nil, &dss)
+	if err != nil {
+		return mo.Datastore{}, err
+	}
+	return dss, nil
+}
+
+type MkDirParams struct {
+	PathName string
+	DcRef    *types.ManagedObjectReference
+}
+
+func (j *Jumpbox) MkDir(p MkDirParams) error {
+	_, err := methods.MakeDirectory(j.ctx, j.EsxiClient.Client, &types.MakeDirectory{
+		This: types.ManagedObjectReference{
+			Type:  "FileManager",
+			Value: "ha-nfc-file-manager",
+		},
+		Name:       fmt.Sprintf("[datastore1] %s", p.PathName),
+		Datacenter: p.DcRef,
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type CpFileParams struct {
+	// Datacenter Name
+	DcName string
+	// Datastore Name
+	DsName string
+	// File Path
+	LocalFilePath string
+	// File Name
+	FileName string
+	// Remote Dir (Datastore Folder)
+	DatastoreDir string
+}
+
+func (j *Jumpbox) CpFileToDatastore(p CpFileParams) error {
+	file, err := os.Open(p.LocalFilePath + p.FileName)
+	if err != nil {
+		return err
+	}
+	httpClient := newHttpService(j.EsxHostIp, &j.EsxiClient.Jar)
+	url := fmt.Sprintf("%s/%s/%s", httpClient.BaseURL, p.DatastoreDir, p.FileName)
+
+	req, err := httpClient.GenerateRequest("PUT", url, file)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	q := req.URL.Query()
+	q.Add("dsName", p.DsName)
+	q.Add("dcPath", p.DcName)
+	req.URL.RawQuery = q.Encode()
+	res, err := httpClient.MakeRequest(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	return nil
 }
 
 // GetVmsWithTickets ...
@@ -167,4 +258,32 @@ func (j *Jumpbox) VswitchPost(p VswitchPostParams) error {
 		return err
 	}
 	return nil
+}
+
+type Service struct {
+	http    *http.Client
+	BaseURL string
+}
+
+func newHttpService(host string, jar *http.CookieJar) *Service {
+	return &Service{
+		BaseURL: fmt.Sprintf("https://%s/folder", host),
+		http: &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
+			},
+			Timeout: 900 * time.Second,
+			Jar:     *jar,
+		},
+	}
+}
+
+func (s *Service) GenerateRequest(method, url string, file *os.File) (*http.Request, error) {
+	return http.NewRequest(method, url, file)
+}
+
+func (s *Service) MakeRequest(req *http.Request) (*http.Response, error) {
+	return s.http.Do(req)
 }
