@@ -62,3 +62,22 @@ params := apgjb.VswitchPostParams{
 }
 err := esxApi.VswitchPost(params)
 ```
+
+### Copy file to Datastore
+1. Get Datastore Name (default datastore1)
+1. Get Datacenter Name
+1. Gather information about Local File (Abs) Path, File Name, and Datastore Folder to Copy (upload) the File to
+```go
+ds, _ := esxApi.GetDatastore()
+dsName := ds.Name
+dc, _ := esxApi.GetDatacenter()
+dcName := dc.Name
+cpParams := apgjb.CpFileParams{
+    DcName: dcName,
+    DsName: dsName,
+    LocalFilePath: "absPath to File",
+    FileName: "fileName",
+    DatastoreDir: "FolderToUploadFileTo",
+}
+err := esxApi.CpFileToDatastore(cpParams)
+```
