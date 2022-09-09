@@ -219,6 +219,16 @@ func (j *Jumpbox) GetVmByUuid(uuid string) (mo.VirtualMachine, error) {
 	return vm, nil
 }
 
+type CreateVmParams struct {
+	Name     string
+	NumCpus  int32
+	MemoryMB int64
+	// VM Notes
+	Annotation    string
+	DatastoreName string
+	ISOName       string
+}
+
 func (j *Jumpbox) CreateVm() error {
 	rsrcPool, err := j.GetRsrcPool()
 	if err != nil {
@@ -256,14 +266,17 @@ func (j *Jumpbox) CreateVm() error {
 // Add CDROM and Mount ISO to It
 // PowerOn Vm
 
-func (j *Jumpbox) GetNetworks() {
-	v, _ := j.getView("Network")
-	defer v.Destroy(j.ctx)
+func (j *Jumpbox) GetNetworks() ([]mo.Network, error) {
 	var networks []mo.Network
-	v.Retrieve(j.ctx, []string{"Network"}, nil, &networks)
-	for _, n := range networks {
-		fmt.Println(n.Name)
+	v, err := j.getView("Network")
+	if err != nil {
+		return networks, err
 	}
+	defer v.Destroy(j.ctx)
+	if err = v.Retrieve(j.ctx, []string{"Network"}, nil, &networks); err != nil {
+		return networks, err
+	}
+	return networks, nil
 }
 
 type AddPgParams struct {
