@@ -66,12 +66,21 @@ err := esxApi.VswitchPost(params)
 ### Copy file to Datastore
 1. Get Datastore Name (default datastore1)
 1. Get Datacenter Name
+1. Make New Directory in Datastore if needed
 1. Gather information about Local File (Abs) Path, File Name, and Datastore Folder to Copy (upload) the File to
 ```go
 ds, _ := esxApi.GetDatastore()
 dsName := ds.Name
 dc, _ := esxApi.GetDatacenter()
 dcName := dc.Name
+dcRef := dc.Reference()
+err = esxApi.MkDir(apgjb.MkDirParams{
+    PathName: "/ISOs",
+    DcRef:    &dcRef,
+})
+if err != nil {
+    log.Fatal(err)
+}
 cpParams := apgjb.CpFileParams{
     DcName: dcName,
     DsName: dsName,
