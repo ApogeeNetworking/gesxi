@@ -22,7 +22,7 @@ func newHttpService(host string, jar *http.CookieJar) *Service {
 					InsecureSkipVerify: true,
 				},
 			},
-			Timeout: 1200 * time.Second,
+			Timeout: 12000 * time.Second,
 			Jar:     *jar,
 		},
 	}
