@@ -88,6 +88,19 @@ func (j *Jumpbox) GetDatastore() (mo.Datastore, error) {
 	return dss, nil
 }
 
+func (j *Jumpbox) GetRsrcPool() (mo.ResourcePool, error) {
+	var rsrcPool mo.ResourcePool
+	view, err := j.getView("ResourcePool")
+	if err != nil {
+		return rsrcPool, err
+	}
+	defer view.Destroy(j.ctx)
+	if err = view.Retrieve(j.ctx, []string{"ResourcePool"}, nil, &rsrcPool); err != nil {
+		return rsrcPool, err
+	}
+	return rsrcPool, nil
+}
+
 type MkDirParams struct {
 	PathName string
 	DcRef    *types.ManagedObjectReference
@@ -183,6 +196,65 @@ func (j *Jumpbox) GetVms() ([]mo.VirtualMachine, error) {
 	}
 	return vms, nil
 }
+
+func (j *Jumpbox) GetVmByUuid(uuid string) (mo.VirtualMachine, error) {
+	var vm mo.VirtualMachine
+	searchIdx := j.EsxiClient.ServiceContent.SearchIndex
+	resp, err := methods.FindByUuid(j.ctx, j.EsxiClient.Client, &types.FindByUuid{
+		This:     *searchIdx,
+		Uuid:     uuid,
+		VmSearch: true,
+	})
+	if err != nil {
+		return vm, err
+	}
+	view, err := j.getView("VirtualMachine")
+	if err != nil {
+		return vm, err
+	}
+	defer view.Destroy(j.ctx)
+	if err = view.Properties(j.ctx, *resp.Returnval, nil, &vm); err != nil {
+		return vm, err
+	}
+	return vm, nil
+}
+
+func (j *Jumpbox) CreateVm() error {
+	rsrcPool, err := j.GetRsrcPool()
+	if err != nil {
+		return err
+	}
+	ds, err := j.GetDatastore()
+	if err != nil {
+		return err
+	}
+	dsName := ds.Name
+	dc, _ := j.GetDatacenter()
+	vmCfgSpec := types.VirtualMachineConfigSpec{
+		Annotation: "sample",
+		MemoryMB:   16000,
+		Name:       "MyVm",
+		NumCPUs:    4,
+		Files: &types.VirtualMachineFileInfo{
+			VmPathName: fmt.Sprintf("[%s]", dsName),
+		},
+	}
+	_, err = methods.CreateVM_Task(j.ctx, j.EsxiClient.Client, &types.CreateVM_Task{
+		This:   dc.VmFolder,
+		Config: vmCfgSpec,
+		Pool:   rsrcPool.Reference(),
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Create VM
+// Add Disk to VM
+// Add Nic to VM
+// Add CDROM and Mount ISO to It
+// PowerOn Vm
 
 func (j *Jumpbox) GetNetworks() {
 	v, _ := j.getView("Network")
