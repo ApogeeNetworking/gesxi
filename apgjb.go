@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/vmware/govmomi/object"
 	"github.com/vmware/govmomi/view"
@@ -208,12 +209,17 @@ func (j *Jumpbox) GetVmByUuid(uuid string) (mo.VirtualMachine, error) {
 	if err != nil {
 		return vm, err
 	}
+	return j.getVmByMo(*resp.Returnval)
+}
+
+func (j *Jumpbox) getVmByMo(moRef types.ManagedObjectReference) (mo.VirtualMachine, error) {
+	var vm mo.VirtualMachine
 	view, err := j.getView("VirtualMachine")
 	if err != nil {
 		return vm, err
 	}
 	defer view.Destroy(j.ctx)
-	if err = view.Properties(j.ctx, *resp.Returnval, nil, &vm); err != nil {
+	if err = view.Properties(j.ctx, moRef, nil, &vm); err != nil {
 		return vm, err
 	}
 	return vm, nil
@@ -226,37 +232,171 @@ type CreateVmParams struct {
 	// VM Notes
 	Annotation    string
 	DatastoreName string
-	ISOName       string
+	DcVmFolder    types.ManagedObjectReference
+	RsrcPool      types.ManagedObjectReference
+	// ISOName       string
+	// DiskType      string
+	// DiskSize      int64
 }
 
-func (j *Jumpbox) CreateVm() error {
-	rsrcPool, err := j.GetRsrcPool()
-	if err != nil {
-		return err
-	}
-	ds, err := j.GetDatastore()
-	if err != nil {
-		return err
-	}
-	dsName := ds.Name
-	dc, _ := j.GetDatacenter()
+func (j *Jumpbox) CreateVm(p CreateVmParams) (mo.VirtualMachine, error) {
+	var vm mo.VirtualMachine
 	vmCfgSpec := types.VirtualMachineConfigSpec{
-		Annotation: "sample",
-		MemoryMB:   16000,
-		Name:       "MyVm",
-		NumCPUs:    4,
+		Annotation: p.Annotation,
+		MemoryMB:   p.MemoryMB,
+		Name:       p.Name,
+		NumCPUs:    p.NumCpus,
 		Files: &types.VirtualMachineFileInfo{
-			VmPathName: fmt.Sprintf("[%s]", dsName),
+			VmPathName: fmt.Sprintf("[%s]", p.DatastoreName),
 		},
 	}
-	_, err = methods.CreateVM_Task(j.ctx, j.EsxiClient.Client, &types.CreateVM_Task{
-		This:   dc.VmFolder,
+	_, err := methods.CreateVM_Task(j.ctx, j.EsxiClient.Client, &types.CreateVM_Task{
+		This:   p.DcVmFolder,
 		Config: vmCfgSpec,
-		Pool:   rsrcPool.Reference(),
+		Pool:   p.RsrcPool,
 	})
+	if err != nil {
+		return vm, err
+	}
+	time.Sleep(500 * time.Millisecond)
+	vms, err := j.GetVms()
+	if err != nil {
+		return vm, err
+	}
+	for _, v := range vms {
+		if v.Name == p.Name {
+			vm = v
+			break
+		}
+	}
+	return vm, nil
+}
+
+func (j *Jumpbox) AddDiskToVm(vm mo.VirtualMachine) error {
+	var spec types.VirtualMachineConfigSpec = types.VirtualMachineConfigSpec{
+		MemoryMB: vm.Config.ToConfigSpec().MemoryMB,
+		NumCPUs:  vm.Config.ToConfigSpec().NumCPUs,
+	}
+	var (
+		thinProv      bool  = true
+		eagarScrub    bool  = false
+		unitNum       int32 = 1
+		controllerKey int32
+	)
+	for _, dev := range vm.Config.Hardware.Device {
+		device := types.VirtualDevice(*dev.GetVirtualDevice())
+		if device.DeviceInfo.GetDescription().Label == "IDE 0" {
+			controllerKey = device.Key
+		}
+	}
+	virtDisk := &types.VirtualDisk{
+		VirtualDevice: types.VirtualDevice{
+			Backing: &types.VirtualDiskFlatVer2BackingInfo{
+				DiskMode:        "independent_persistent",
+				ThinProvisioned: &thinProv,
+				EagerlyScrub:    &eagarScrub,
+				Sharing:         "sharingNone",
+				VirtualDeviceFileBackingInfo: types.VirtualDeviceFileBackingInfo{
+					FileName:  fmt.Sprintf("[%s] %s", vm.Config.DatastoreUrl[0].Name, vm.Name),
+					Datastore: &vm.Datastore[0],
+				},
+			},
+			UnitNumber:    &unitNum,
+			ControllerKey: controllerKey,
+			Key:           -1000000,
+		},
+		CapacityInKB: int64(80000),
+	}
+	diskSpec := types.VirtualDeviceConfigSpec{
+		FileOperation: types.VirtualDeviceConfigSpecFileOperationCreate,
+		Operation:     types.VirtualDeviceConfigSpecOperationAdd,
+		Device:        virtDisk,
+	}
+	spec.DeviceChange = append(spec.DeviceChange, types.BaseVirtualDeviceConfigSpec(&diskSpec))
+	_, err := methods.ReconfigVM_Task(j.ctx, j.EsxiClient.Client, &types.ReconfigVM_Task{
+		This: vm.Reference(),
+		Spec: spec,
+	})
+	time.Sleep(500 * time.Millisecond)
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func (j *Jumpbox) AddNicToVm(vm mo.VirtualMachine, netName string) error {
+	var (
+		wakeOnLan      bool = true
+		useAutoDectect bool = false
+		netMo          types.ManagedObjectReference
+		network        mo.Network
+		inPassThruMode bool = false
+	)
+	var spec types.VirtualMachineConfigSpec = types.VirtualMachineConfigSpec{
+		MemoryMB: vm.Config.ToConfigSpec().MemoryMB,
+		NumCPUs:  vm.Config.ToConfigSpec().NumCPUs,
+	}
+
+	device := types.VirtualE1000{
+		VirtualEthernetCard: types.VirtualEthernetCard{
+			VirtualDevice: types.VirtualDevice{
+				Key: 100,
+				DeviceInfo: &types.Description{
+					Summary: "vSphere API Test",
+				},
+				Connectable: &types.VirtualDeviceConnectInfo{
+					StartConnected:    true,
+					AllowGuestControl: true,
+					Connected:         false,
+					Status:            "untried",
+				},
+			},
+			AddressType:      "generated",
+			WakeOnLanEnabled: &wakeOnLan,
+		},
+	}
+	networks, err := j.GetNetworks()
+	for _, net := range networks {
+		if net.Name == netName {
+			network = net
+			netMo = net.Reference()
+		}
+	}
+	if err != nil {
+		return err
+	}
+	switch {
+	case netMo.Type == "Network":
+		device.VirtualEthernetCard.VirtualDevice.Backing = &types.VirtualEthernetCardNetworkBackingInfo{
+			VirtualDeviceDeviceBackingInfo: types.VirtualDeviceDeviceBackingInfo{
+				UseAutoDetect: &useAutoDectect,
+				DeviceName:    network.Name,
+			},
+			Network:           &network.Self,
+			InPassthroughMode: &inPassThruMode,
+		}
+	default:
+		device.VirtualEthernetCard.VirtualDevice.Backing = types.BaseVirtualDeviceBackingInfo(
+			&types.VirtualEthernetCardOpaqueNetworkBackingInfo{
+				OpaqueNetworkType: network.Summary.GetNetworkSummary().Network.Type,
+				OpaqueNetworkId:   network.Summary.GetNetworkSummary().Name,
+			},
+		)
+	}
+	nicSpec := types.VirtualDeviceConfigSpec{
+		Operation: types.VirtualDeviceConfigSpecOperationAdd,
+		Device:    &device,
+	}
+	spec.DeviceChange = append(spec.DeviceChange, &nicSpec)
+	rcfgVm := &types.ReconfigVM_Task{
+		This: vm.Reference(),
+		Spec: spec,
+	}
+	_, err = methods.ReconfigVM_Task(j.ctx, j.EsxiClient.Client, rcfgVm)
+	if err != nil {
+		return err
+	}
+	time.Sleep(500 * time.Millisecond)
 	return nil
 }
 
