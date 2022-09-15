@@ -134,7 +134,8 @@ type CpFileParams struct {
 	// File Name
 	FileName string
 	// Remote Dir (Datastore Folder)
-	DatastoreDir string
+	DatastoreDir   string
+	RemoteFileName string
 }
 
 func (s *EsxiService) CpFileToDatastore(p CpFileParams) error {
@@ -143,7 +144,10 @@ func (s *EsxiService) CpFileToDatastore(p CpFileParams) error {
 		return err
 	}
 	httpClient := newHttpService(s.EsxHostIp, &s.EsxiClient.Jar)
-	url := fmt.Sprintf("%s/%s/%s", httpClient.BaseURL, p.DatastoreDir, p.FileName)
+	if p.RemoteFileName == "" {
+		p.RemoteFileName = p.FileName
+	}
+	url := fmt.Sprintf("%s/%s/%s", httpClient.BaseURL, p.DatastoreDir, p.RemoteFileName)
 
 	req, err := httpClient.GenerateRequest("PUT", url, file)
 	if err != nil {
@@ -529,12 +533,16 @@ type HandleImportVAppParams struct {
 	Datastore  types.ManagedObjectReference
 	RsrcPool   types.ManagedObjectReference
 	NetSys     []mo.Network
-	Vm         struct {
+	// Values in <ovf:Property> tags
+	PropertyMapping []types.KeyValue
+	Vm              struct {
 		Name             string
 		MemoryMB         int64
 		NumCpus          int32
 		PgNames          []string
 		DiskProvisioning string
+		// ids from <ovf:DeploymentOptionSection> tag
+		DeploymentOptions string
 	}
 }
 
@@ -571,7 +579,8 @@ func (s *EsxiService) ImportVApp(p HandleImportVAppParams) (types.ManagedObjectR
 	}
 	cisp := types.OvfCreateImportSpecParams{
 		OvfManagerCommonParams: types.OvfManagerCommonParams{
-			Locale: "US",
+			Locale:           "US",
+			DeploymentOption: "4CPU-8GB",
 		},
 		EntityName:       p.Vm.Name,
 		HostSystem:       &p.HostSystem,
@@ -628,14 +637,20 @@ func (s *EsxiService) HandleVmdkTransfer(uri, dir string, disks []string, lease 
 		d, _ := ioutil.ReadAll(resp.Body)
 		respText := string(d)
 		if strings.Contains(respText, "Cannot POST") {
+			var remoteFileName string
+			switch {
+			case strings.Contains(disk, ".iso"):
+				remoteFileName = "_deviceImage-0.iso"
+			}
 			dc, _ := s.GetDatacenter()
 			ds, _ := s.GetDatastore()
 			s.CpFileToDatastore(CpFileParams{
-				DcName:        dc.Name,
-				DsName:        ds.Name,
-				LocalFilePath: dir,
-				FileName:      disk,
-				DatastoreDir:  fmt.Sprintf("/%s", p.Vm.Name),
+				DcName:         dc.Name,
+				DsName:         ds.Name,
+				LocalFilePath:  dir,
+				FileName:       disk,
+				DatastoreDir:   fmt.Sprintf("/%s", p.Vm.Name),
+				RemoteFileName: remoteFileName,
 			})
 		}
 	}
