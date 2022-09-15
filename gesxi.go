@@ -18,90 +18,90 @@ import (
 	"github.com/vmware/govmomi/vim25/types"
 )
 
-// Jumpbox ...
-type Jumpbox struct {
+// EsxiService ...
+type EsxiService struct {
 	EsxHostIp  string
 	EsxiClient *esxClient
 	ctx        context.Context
 }
 
-// NewJumpbox ...
-func NewJumpbox(host, user, pass string) *Jumpbox {
+// NewEsxiService ...
+func NewEsxiService(host, user, pass string) *EsxiService {
 	ctx := context.Background()
 	uri := fmt.Sprintf("https://%s/sdk", host)
 	client := newEsxClient(ctx, uri, user, pass)
 
-	return &Jumpbox{ctx: ctx, EsxiClient: client, EsxHostIp: host}
+	return &EsxiService{ctx: ctx, EsxiClient: client, EsxHostIp: host}
 }
 
-func (j *Jumpbox) Login() error {
-	return j.EsxiClient.Login(j.ctx, j.EsxiClient.Userinfo)
+func (s *EsxiService) Login() error {
+	return s.EsxiClient.Login(s.ctx, s.EsxiClient.Userinfo)
 }
 
-func (j *Jumpbox) Logout() error {
-	return j.EsxiClient.Logout(j.ctx)
+func (s *EsxiService) Logout() error {
+	return s.EsxiClient.Logout(s.ctx)
 }
 
-func (j *Jumpbox) getView(v string) (*view.ContainerView, error) {
-	m := view.NewManager(j.EsxiClient.Client)
+func (s *EsxiService) getView(v string) (*view.ContainerView, error) {
+	m := view.NewManager(s.EsxiClient.Client)
 	return m.CreateContainerView(
-		j.ctx,
-		j.EsxiClient.ServiceContent.RootFolder,
+		s.ctx,
+		s.EsxiClient.ServiceContent.RootFolder,
 		[]string{v},
 		true,
 	)
 }
 
-func (j *Jumpbox) GetHosts() ([]mo.HostSystem, error) {
-	v, err := j.getView("HostSystem")
+func (s *EsxiService) GetHosts() ([]mo.HostSystem, error) {
+	v, err := s.getView("HostSystem")
 	if err != nil {
 		return nil, err
 	}
-	defer v.Destroy(j.ctx)
+	defer v.Destroy(s.ctx)
 	var hosts []mo.HostSystem
-	err = v.Retrieve(j.ctx, []string{"HostSystem"}, nil, &hosts)
+	err = v.Retrieve(s.ctx, []string{"HostSystem"}, nil, &hosts)
 	if err != nil {
 		return nil, err
 	}
 	return hosts, nil
 }
 
-func (j *Jumpbox) GetDatacenter() (mo.Datacenter, error) {
-	v, err := j.getView("Datacenter")
+func (s *EsxiService) GetDatacenter() (mo.Datacenter, error) {
+	v, err := s.getView("Datacenter")
 	if err != nil {
 		return mo.Datacenter{}, err
 	}
-	defer v.Destroy(j.ctx)
+	defer v.Destroy(s.ctx)
 	var dc mo.Datacenter
-	err = v.Retrieve(j.ctx, []string{"Datacenter"}, nil, &dc)
+	err = v.Retrieve(s.ctx, []string{"Datacenter"}, nil, &dc)
 	if err != nil {
 		return dc, err
 	}
 	return dc, nil
 }
 
-func (j *Jumpbox) GetDatastore() (mo.Datastore, error) {
-	v, err := j.getView("Datastore")
+func (s *EsxiService) GetDatastore() (mo.Datastore, error) {
+	v, err := s.getView("Datastore")
 	if err != nil {
 		return mo.Datastore{}, err
 	}
-	defer v.Destroy(j.ctx)
+	defer v.Destroy(s.ctx)
 	var dss mo.Datastore
-	err = v.Retrieve(j.ctx, []string{"Datastore"}, nil, &dss)
+	err = v.Retrieve(s.ctx, []string{"Datastore"}, nil, &dss)
 	if err != nil {
 		return mo.Datastore{}, err
 	}
 	return dss, nil
 }
 
-func (j *Jumpbox) GetRsrcPool() (mo.ResourcePool, error) {
+func (s *EsxiService) GetRsrcPool() (mo.ResourcePool, error) {
 	var rsrcPool mo.ResourcePool
-	view, err := j.getView("ResourcePool")
+	view, err := s.getView("ResourcePool")
 	if err != nil {
 		return rsrcPool, err
 	}
-	defer view.Destroy(j.ctx)
-	if err = view.Retrieve(j.ctx, []string{"ResourcePool"}, nil, &rsrcPool); err != nil {
+	defer view.Destroy(s.ctx)
+	if err = view.Retrieve(s.ctx, []string{"ResourcePool"}, nil, &rsrcPool); err != nil {
 		return rsrcPool, err
 	}
 	return rsrcPool, nil
@@ -112,9 +112,9 @@ type MkDirParams struct {
 	DcRef    *types.ManagedObjectReference
 }
 
-func (j *Jumpbox) MkDir(p MkDirParams) error {
-	_, err := methods.MakeDirectory(j.ctx, j.EsxiClient.Client, &types.MakeDirectory{
-		This:       j.EsxiClient.ServiceContent.FileManager.Reference(),
+func (s *EsxiService) MkDir(p MkDirParams) error {
+	_, err := methods.MakeDirectory(s.ctx, s.EsxiClient.Client, &types.MakeDirectory{
+		This:       s.EsxiClient.ServiceContent.FileManager.Reference(),
 		Name:       fmt.Sprintf("[datastore1] %s", p.PathName),
 		Datacenter: p.DcRef,
 	})
@@ -137,12 +137,12 @@ type CpFileParams struct {
 	DatastoreDir string
 }
 
-func (j *Jumpbox) CpFileToDatastore(p CpFileParams) error {
+func (s *EsxiService) CpFileToDatastore(p CpFileParams) error {
 	file, err := os.Open(fmt.Sprintf("%s/%s", p.LocalFilePath, p.FileName))
 	if err != nil {
 		return err
 	}
-	httpClient := newHttpService(j.EsxHostIp, &j.EsxiClient.Jar)
+	httpClient := newHttpService(s.EsxHostIp, &s.EsxiClient.Jar)
 	url := fmt.Sprintf("%s/%s/%s", httpClient.BaseURL, p.DatastoreDir, p.FileName)
 
 	req, err := httpClient.GenerateRequest("PUT", url, file)
@@ -163,17 +163,17 @@ func (j *Jumpbox) CpFileToDatastore(p CpFileParams) error {
 }
 
 // GetVmsWithTickets ...
-func (j *Jumpbox) GetVmsWithTickets() []ApgVM {
-	v, _ := j.getView("VirtualMachine")
-	defer v.Destroy(j.ctx)
+func (s *EsxiService) GetVmsWithTickets() []ApgVM {
+	v, _ := s.getView("VirtualMachine")
+	defer v.Destroy(s.ctx)
 	var vmMos []mo.VirtualMachine
-	v.Retrieve(j.ctx, []string{"VirtualMachine"}, []string{"summary"}, &vmMos)
+	v.Retrieve(s.ctx, []string{"VirtualMachine"}, []string{"summary"}, &vmMos)
 
 	var vms []ApgVM
 
 	for _, vmMo := range vmMos {
-		vm := object.NewVirtualMachine(j.EsxiClient.Client, vmMo.Reference())
-		vmTicket, _ := vm.AcquireTicket(j.ctx, "mks")
+		vm := object.NewVirtualMachine(s.EsxiClient.Client, vmMo.Reference())
+		vmTicket, _ := vm.AcquireTicket(s.ctx, "mks")
 		apgVM := ApgVM{
 			UUID:         vmMo.Summary.Config.Uuid,
 			InstanceUUID: vmMo.Summary.Config.InstanceUuid,
@@ -190,23 +190,23 @@ func (j *Jumpbox) GetVmsWithTickets() []ApgVM {
 	return vms
 }
 
-func (j *Jumpbox) GetVms() ([]mo.VirtualMachine, error) {
-	view, err := j.getView("VirtualMachine")
+func (s *EsxiService) GetVms() ([]mo.VirtualMachine, error) {
+	view, err := s.getView("VirtualMachine")
 	if err != nil {
 		return nil, err
 	}
-	defer view.Destroy(j.ctx)
+	defer view.Destroy(s.ctx)
 	var vms []mo.VirtualMachine
-	if err = view.Retrieve(j.ctx, []string{"VirtualMachine"}, nil, &vms); err != nil {
+	if err = view.Retrieve(s.ctx, []string{"VirtualMachine"}, nil, &vms); err != nil {
 		return nil, err
 	}
 	return vms, nil
 }
 
-func (j *Jumpbox) GetVmByUuid(uuid string) (mo.VirtualMachine, error) {
+func (s *EsxiService) GetVmByUuid(uuid string) (mo.VirtualMachine, error) {
 	var vm mo.VirtualMachine
-	searchIdx := j.EsxiClient.ServiceContent.SearchIndex
-	resp, err := methods.FindByUuid(j.ctx, j.EsxiClient.Client, &types.FindByUuid{
+	searchIdx := s.EsxiClient.ServiceContent.SearchIndex
+	resp, err := methods.FindByUuid(s.ctx, s.EsxiClient.Client, &types.FindByUuid{
 		This:     *searchIdx,
 		Uuid:     uuid,
 		VmSearch: true,
@@ -214,17 +214,17 @@ func (j *Jumpbox) GetVmByUuid(uuid string) (mo.VirtualMachine, error) {
 	if err != nil {
 		return vm, err
 	}
-	return j.getVmByMo(*resp.Returnval)
+	return s.getVmByMo(*resp.Returnval)
 }
 
-func (j *Jumpbox) getVmByMo(moRef types.ManagedObjectReference) (mo.VirtualMachine, error) {
+func (s *EsxiService) getVmByMo(moRef types.ManagedObjectReference) (mo.VirtualMachine, error) {
 	var vm mo.VirtualMachine
-	view, err := j.getView("VirtualMachine")
+	view, err := s.getView("VirtualMachine")
 	if err != nil {
 		return vm, err
 	}
-	defer view.Destroy(j.ctx)
-	if err = view.Properties(j.ctx, moRef, nil, &vm); err != nil {
+	defer view.Destroy(s.ctx)
+	if err = view.Properties(s.ctx, moRef, nil, &vm); err != nil {
 		return vm, err
 	}
 	return vm, nil
@@ -241,7 +241,7 @@ type CreateVmParams struct {
 	RsrcPool      types.ManagedObjectReference
 }
 
-func (j *Jumpbox) CreateVm(p CreateVmParams) (mo.VirtualMachine, error) {
+func (s *EsxiService) CreateVm(p CreateVmParams) (mo.VirtualMachine, error) {
 	var vm mo.VirtualMachine
 	vmCfgSpec := types.VirtualMachineConfigSpec{
 		Annotation: p.Annotation,
@@ -252,7 +252,7 @@ func (j *Jumpbox) CreateVm(p CreateVmParams) (mo.VirtualMachine, error) {
 			VmPathName: fmt.Sprintf("[%s]", p.DatastoreName),
 		},
 	}
-	_, err := methods.CreateVM_Task(j.ctx, j.EsxiClient.Client, &types.CreateVM_Task{
+	_, err := methods.CreateVM_Task(s.ctx, s.EsxiClient.Client, &types.CreateVM_Task{
 		This:   p.DcVmFolder,
 		Config: vmCfgSpec,
 		Pool:   p.RsrcPool,
@@ -261,7 +261,7 @@ func (j *Jumpbox) CreateVm(p CreateVmParams) (mo.VirtualMachine, error) {
 		return vm, err
 	}
 	time.Sleep(500 * time.Millisecond)
-	vms, err := j.GetVms()
+	vms, err := s.GetVms()
 	if err != nil {
 		return vm, err
 	}
@@ -274,7 +274,7 @@ func (j *Jumpbox) CreateVm(p CreateVmParams) (mo.VirtualMachine, error) {
 	return vm, nil
 }
 
-func (j *Jumpbox) AddDiskToVm(vm mo.VirtualMachine) error {
+func (s *EsxiService) AddDiskToVm(vm mo.VirtualMachine) error {
 	var spec types.VirtualMachineConfigSpec = types.VirtualMachineConfigSpec{
 		MemoryMB: vm.Config.ToConfigSpec().MemoryMB,
 		NumCPUs:  vm.Config.ToConfigSpec().NumCPUs,
@@ -315,7 +315,7 @@ func (j *Jumpbox) AddDiskToVm(vm mo.VirtualMachine) error {
 		Device:        virtDisk,
 	}
 	spec.DeviceChange = append(spec.DeviceChange, types.BaseVirtualDeviceConfigSpec(&diskSpec))
-	_, err := methods.ReconfigVM_Task(j.ctx, j.EsxiClient.Client, &types.ReconfigVM_Task{
+	_, err := methods.ReconfigVM_Task(s.ctx, s.EsxiClient.Client, &types.ReconfigVM_Task{
 		This: vm.Reference(),
 		Spec: spec,
 	})
@@ -326,7 +326,7 @@ func (j *Jumpbox) AddDiskToVm(vm mo.VirtualMachine) error {
 	return nil
 }
 
-func (j *Jumpbox) AddNicToVm(vm mo.VirtualMachine, netName string) error {
+func (s *EsxiService) AddNicToVm(vm mo.VirtualMachine, netName string) error {
 	var (
 		wakeOnLan      bool = true
 		useAutoDectect bool = false
@@ -357,7 +357,7 @@ func (j *Jumpbox) AddNicToVm(vm mo.VirtualMachine, netName string) error {
 			WakeOnLanEnabled: &wakeOnLan,
 		},
 	}
-	networks, err := j.GetNetworks()
+	networks, err := s.GetNetworks()
 	for _, net := range networks {
 		if net.Name == netName {
 			network = net
@@ -394,7 +394,7 @@ func (j *Jumpbox) AddNicToVm(vm mo.VirtualMachine, netName string) error {
 		This: vm.Reference(),
 		Spec: spec,
 	}
-	_, err = methods.ReconfigVM_Task(j.ctx, j.EsxiClient.Client, rcfgVm)
+	_, err = methods.ReconfigVM_Task(s.ctx, s.EsxiClient.Client, rcfgVm)
 	if err != nil {
 		return err
 	}
@@ -402,27 +402,27 @@ func (j *Jumpbox) AddNicToVm(vm mo.VirtualMachine, netName string) error {
 	return nil
 }
 
-func (j *Jumpbox) Power(action, appType string, moRef types.ManagedObjectReference) (*types.ManagedObjectReference, error) {
+func (s *EsxiService) Power(action, appType string, moRef types.ManagedObjectReference) (*types.ManagedObjectReference, error) {
 	switch appType {
 	case "vm":
 		if action == "on" {
-			pwrOnTask, err := methods.PowerOnVM_Task(j.ctx, j.EsxiClient.Client, &types.PowerOnVM_Task{
+			pwrOnTask, err := methods.PowerOnVM_Task(s.ctx, s.EsxiClient.Client, &types.PowerOnVM_Task{
 				This: moRef,
 			})
 			return &pwrOnTask.Returnval, err
 		}
-		pwrOffTask, err := methods.PowerOffVM_Task(j.ctx, j.EsxiClient.Client, &types.PowerOffVM_Task{
+		pwrOffTask, err := methods.PowerOffVM_Task(s.ctx, s.EsxiClient.Client, &types.PowerOffVM_Task{
 			This: moRef,
 		})
 		return &pwrOffTask.Returnval, err
 	case "vapp":
 		if action == "on" {
-			pwrOnTask, err := methods.PowerOnVApp_Task(j.ctx, j.EsxiClient.Client, &types.PowerOnVApp_Task{
+			pwrOnTask, err := methods.PowerOnVApp_Task(s.ctx, s.EsxiClient.Client, &types.PowerOnVApp_Task{
 				This: moRef,
 			})
 			return &pwrOnTask.Returnval, err
 		}
-		pwrOffTask, err := methods.PowerOffVApp_Task(j.ctx, j.EsxiClient.Client, &types.PowerOffVApp_Task{
+		pwrOffTask, err := methods.PowerOffVApp_Task(s.ctx, s.EsxiClient.Client, &types.PowerOffVApp_Task{
 			This: moRef,
 		})
 		return &pwrOffTask.Returnval, err
@@ -436,14 +436,14 @@ func (j *Jumpbox) Power(action, appType string, moRef types.ManagedObjectReferen
 // Add CDROM and Mount ISO to It
 // PowerOn Vm
 
-func (j *Jumpbox) GetNetworks() ([]mo.Network, error) {
+func (s *EsxiService) GetNetworks() ([]mo.Network, error) {
 	var networks []mo.Network
-	v, err := j.getView("Network")
+	v, err := s.getView("Network")
 	if err != nil {
 		return networks, err
 	}
-	defer v.Destroy(j.ctx)
-	if err = v.Retrieve(j.ctx, []string{"Network"}, nil, &networks); err != nil {
+	defer v.Destroy(s.ctx)
+	if err = v.Retrieve(s.ctx, []string{"Network"}, nil, &networks); err != nil {
 		return networks, err
 	}
 	return networks, nil
@@ -466,7 +466,7 @@ type NetSec struct {
 }
 
 // AddPG adds a PortGroup to an Existing vSwitch
-func (j *Jumpbox) AddPG(p AddPgParams) error {
+func (s *EsxiService) AddPG(p AddPgParams) error {
 	policy := types.HostNetworkPolicy{}
 	if p.Security.AllowPromiscuous {
 		*policy.Security.AllowPromiscuous = p.Security.AllowPromiscuous
@@ -477,7 +477,7 @@ func (j *Jumpbox) AddPG(p AddPgParams) error {
 	if p.Security.ForgedXmits {
 		*policy.Security.ForgedTransmits = p.Security.ForgedXmits
 	}
-	_, err := methods.AddPortGroup(j.ctx, j.EsxiClient.Client, &types.AddPortGroup{
+	_, err := methods.AddPortGroup(s.ctx, s.EsxiClient.Client, &types.AddPortGroup{
 		This: p.HostNetSystemRef,
 		Portgrp: types.HostPortGroupSpec{
 			Name:        p.PgName,
@@ -504,8 +504,8 @@ type VswitchPostParams struct {
 	ChangMode        types.HostConfigChangeMode
 }
 
-func (j *Jumpbox) VswitchPost(p VswitchPostParams) error {
-	_, err := methods.UpdateNetworkConfig(j.ctx, j.EsxiClient.Client, &types.UpdateNetworkConfig{
+func (s *EsxiService) VswitchPost(p VswitchPostParams) error {
+	_, err := methods.UpdateNetworkConfig(s.ctx, s.EsxiClient.Client, &types.UpdateNetworkConfig{
 		This: p.HostNetSystemRef,
 		Config: types.HostNetworkConfig{
 			Vswitch: []types.HostVirtualSwitchConfig{{
@@ -547,8 +547,8 @@ type OvaInfo struct {
 	Disks []string
 }
 
-func (j *Jumpbox) HandleOvaExtract(dir, filename string) (OvaInfo, error) {
-	ovaInfo, err := j.extractOva(dir, filename)
+func (s *EsxiService) HandleOvaExtract(dir, filename string) (OvaInfo, error) {
+	ovaInfo, err := s.extractOva(dir, filename)
 	if err != nil {
 		return ovaInfo, err
 	}
@@ -556,7 +556,7 @@ func (j *Jumpbox) HandleOvaExtract(dir, filename string) (OvaInfo, error) {
 	return ovaInfo, nil
 }
 
-func (j *Jumpbox) ImportVApp(p HandleImportVAppParams) (types.ManagedObjectReference, error) {
+func (s *EsxiService) ImportVApp(p HandleImportVAppParams) (types.ManagedObjectReference, error) {
 	var mo types.ManagedObjectReference
 	// Set OvfNetworkMapping according to PortGroup Names to Add for VM Networking
 	var networkMapping []types.OvfNetworkMapping
@@ -578,8 +578,8 @@ func (j *Jumpbox) ImportVApp(p HandleImportVAppParams) (types.ManagedObjectRefer
 		NetworkMapping:   networkMapping,
 		DiskProvisioning: p.Vm.DiskProvisioning,
 	}
-	ovfMo := j.EsxiClient.ServiceContent.OvfManager
-	cisr, err := methods.CreateImportSpec(j.ctx, j.EsxiClient.Client, &types.CreateImportSpec{
+	ovfMo := s.EsxiClient.ServiceContent.OvfManager
+	cisr, err := methods.CreateImportSpec(s.ctx, s.EsxiClient.Client, &types.CreateImportSpec{
 		This:          *ovfMo,
 		OvfDescriptor: p.Ova.Ovf.Data,
 		ResourcePool:  p.RsrcPool,
@@ -589,7 +589,7 @@ func (j *Jumpbox) ImportVApp(p HandleImportVAppParams) (types.ManagedObjectRefer
 	if err != nil {
 		return mo, err
 	}
-	resp, err := methods.ImportVApp(j.ctx, j.EsxiClient.Client, &types.ImportVApp{
+	resp, err := methods.ImportVApp(s.ctx, s.EsxiClient.Client, &types.ImportVApp{
 		This:   p.RsrcPool,
 		Spec:   cisr.Returnval.ImportSpec,
 		Folder: &p.DcVmFolder,
@@ -603,8 +603,8 @@ func (j *Jumpbox) ImportVApp(p HandleImportVAppParams) (types.ManagedObjectRefer
 	return resp.Returnval, nil
 }
 
-func (j *Jumpbox) HandleVmdkTransfer(uri, dir string, disks []string, lease *mo.HttpNfcLease, p HandleImportVAppParams) error {
-	url := strings.Replace(uri, "*", j.EsxHostIp, -1)
+func (s *EsxiService) HandleVmdkTransfer(uri, dir string, disks []string, lease *mo.HttpNfcLease, p HandleImportVAppParams) error {
+	url := strings.Replace(uri, "*", s.EsxHostIp, -1)
 	for _, disk := range disks {
 		path := fmt.Sprintf("./%s/%s", dir, disk)
 		payload, err := os.Open(path)
@@ -612,7 +612,7 @@ func (j *Jumpbox) HandleVmdkTransfer(uri, dir string, disks []string, lease *mo.
 			fmt.Println("error with disk")
 			return err
 		}
-		requestor := newHttpService(j.EsxHostIp, &j.EsxiClient.Jar)
+		requestor := newHttpService(s.EsxHostIp, &s.EsxiClient.Jar)
 		req, err := requestor.GenerateRequest("POST", url, payload)
 		if err != nil {
 			fmt.Println("error generating request")
@@ -628,9 +628,9 @@ func (j *Jumpbox) HandleVmdkTransfer(uri, dir string, disks []string, lease *mo.
 		d, _ := ioutil.ReadAll(resp.Body)
 		respText := string(d)
 		if strings.Contains(respText, "Cannot POST") {
-			dc, _ := j.GetDatacenter()
-			ds, _ := j.GetDatastore()
-			j.CpFileToDatastore(CpFileParams{
+			dc, _ := s.GetDatacenter()
+			ds, _ := s.GetDatastore()
+			s.CpFileToDatastore(CpFileParams{
 				DcName:        dc.Name,
 				DsName:        ds.Name,
 				LocalFilePath: dir,
@@ -640,7 +640,7 @@ func (j *Jumpbox) HandleVmdkTransfer(uri, dir string, disks []string, lease *mo.
 		}
 	}
 	// Close the Lease for the VAppImport
-	_, err := methods.HttpNfcLeaseComplete(j.ctx, j.EsxiClient.Client, &types.HttpNfcLeaseComplete{
+	_, err := methods.HttpNfcLeaseComplete(s.ctx, s.EsxiClient.Client, &types.HttpNfcLeaseComplete{
 		This: lease.Self,
 	})
 	if err != nil {
@@ -649,10 +649,10 @@ func (j *Jumpbox) HandleVmdkTransfer(uri, dir string, disks []string, lease *mo.
 	return nil
 }
 
-func (j *Jumpbox) HandleLease(moRef types.ManagedObjectReference) (mo.HttpNfcLease, error) {
+func (s *EsxiService) HandleLease(moRef types.ManagedObjectReference) (mo.HttpNfcLease, error) {
 	var lease mo.HttpNfcLease
-	m := view.NewManager(j.EsxiClient.Client)
-	err := m.Properties(j.ctx, moRef, nil, &lease)
+	m := view.NewManager(s.EsxiClient.Client)
+	err := m.Properties(s.ctx, moRef, nil, &lease)
 	if err != nil {
 		return lease, err
 	}
@@ -668,7 +668,7 @@ LeaseState:
 		case string(types.HttpNfcLeaseStateReady):
 			break LeaseState
 		}
-		lease, err := j.getLease(moRef)
+		lease, err := s.getLease(moRef)
 		if err != nil {
 			break
 		}
@@ -680,10 +680,10 @@ LeaseState:
 	return lease, nil
 }
 
-func (j *Jumpbox) getLease(leaseMo types.ManagedObjectReference) (mo.HttpNfcLease, error) {
+func (s *EsxiService) getLease(leaseMo types.ManagedObjectReference) (mo.HttpNfcLease, error) {
 	var lease mo.HttpNfcLease
-	manager := view.NewManager(j.EsxiClient.Client)
-	err := manager.Properties(j.ctx, leaseMo, nil, &lease)
+	manager := view.NewManager(s.EsxiClient.Client)
+	err := manager.Properties(s.ctx, leaseMo, nil, &lease)
 	if err != nil {
 		fmt.Println("error getting HttpNfcLease Properties")
 		return lease, err
@@ -691,7 +691,7 @@ func (j *Jumpbox) getLease(leaseMo types.ManagedObjectReference) (mo.HttpNfcLeas
 	return lease, nil
 }
 
-func (j *Jumpbox) extractOva(path, filename string) (OvaInfo, error) {
+func (s *EsxiService) extractOva(path, filename string) (OvaInfo, error) {
 	var ovaInfo OvaInfo
 	f, err := os.Open(fmt.Sprintf("./%s/%s", path, filename))
 	if err != nil {
