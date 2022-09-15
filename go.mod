@@ -1,4 +1,4 @@
-module github.com/ApogeeNetworking/apgjb
+module github.com/ApogeeNetworking/gesxi
 
 go 1.18
 
