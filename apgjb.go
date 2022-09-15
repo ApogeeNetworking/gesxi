@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -403,6 +402,34 @@ func (j *Jumpbox) AddNicToVm(vm mo.VirtualMachine, netName string) error {
 	return nil
 }
 
+func (j *Jumpbox) Power(action, appType string, moRef types.ManagedObjectReference) (*types.ManagedObjectReference, error) {
+	switch appType {
+	case "vm":
+		if action == "on" {
+			pwrOnTask, err := methods.PowerOnVM_Task(j.ctx, j.EsxiClient.Client, &types.PowerOnVM_Task{
+				This: moRef,
+			})
+			return &pwrOnTask.Returnval, err
+		}
+		pwrOffTask, err := methods.PowerOffVM_Task(j.ctx, j.EsxiClient.Client, &types.PowerOffVM_Task{
+			This: moRef,
+		})
+		return &pwrOffTask.Returnval, err
+	case "vapp":
+		if action == "on" {
+			pwrOnTask, err := methods.PowerOnVApp_Task(j.ctx, j.EsxiClient.Client, &types.PowerOnVApp_Task{
+				This: moRef,
+			})
+			return &pwrOnTask.Returnval, err
+		}
+		pwrOffTask, err := methods.PowerOffVApp_Task(j.ctx, j.EsxiClient.Client, &types.PowerOffVApp_Task{
+			This: moRef,
+		})
+		return &pwrOffTask.Returnval, err
+	}
+	return nil, nil
+}
+
 // Create VM
 // Add Disk to VM
 // Add Nic to VM
@@ -495,51 +522,53 @@ func (j *Jumpbox) VswitchPost(p VswitchPostParams) error {
 	return nil
 }
 
-type HandleOvaParams struct {
-	OvaFilename string
-	OvaDir      string
-	Folder      types.ManagedObjectReference
-	HostSystem  types.ManagedObjectReference
-	Datastore   types.ManagedObjectReference
-	RsrcPool    types.ManagedObjectReference
-	NetSys      []mo.Network
-	Vm          struct {
-		Name     string
-		MemoryMB int64
-		NumCpus  int32
+type HandleImportVAppParams struct {
+	Ova        OvaInfo
+	DcVmFolder types.ManagedObjectReference
+	HostSystem types.ManagedObjectReference
+	Datastore  types.ManagedObjectReference
+	RsrcPool   types.ManagedObjectReference
+	NetSys     []mo.Network
+	Vm         struct {
+		Name             string
+		MemoryMB         int64
+		NumCpus          int32
+		PgNames          []string
+		DiskProvisioning string
 	}
 }
 
-type OvfInfo struct {
+type OvaInfo struct {
 	Ovf struct {
 		FileName string
 		Data     string
 	}
+	Dir   string
 	Disks []string
 }
 
-func (j *Jumpbox) HandleOva(p HandleOvaParams) error {
-	ovfInfo, err := j.extractOva(p.OvaDir, p.OvaFilename)
+func (j *Jumpbox) HandleOvaExtract(dir, filename string) (OvaInfo, error) {
+	ovaInfo, err := j.extractOva(dir, filename)
 	if err != nil {
-		return err
+		return ovaInfo, err
 	}
+	ovaInfo.Dir = dir
+	return ovaInfo, nil
+}
+
+func (j *Jumpbox) ImportVApp(p HandleImportVAppParams) (types.ManagedObjectReference, error) {
+	var mo types.ManagedObjectReference
+	// Set OvfNetworkMapping according to PortGroup Names to Add for VM Networking
 	var networkMapping []types.OvfNetworkMapping
 	for _, net := range p.NetSys {
-		networkMapping = append(networkMapping, types.OvfNetworkMapping{
-			Name:    "VM Network",
-			Network: net.Reference(),
-		})
-		networkMapping = append(networkMapping, types.OvfNetworkMapping{
-			Name:    "VM Network 1",
-			Network: net.Reference(),
-		})
-		networkMapping = append(networkMapping, types.OvfNetworkMapping{
-			Name:    "VM Network 2",
-			Network: net.Reference(),
-		})
+		for _, pg := range p.Vm.PgNames {
+			if net.Name == pg {
+				networkMapping = append(networkMapping, types.OvfNetworkMapping{
+					Network: net.Reference(),
+				})
+			}
+		}
 	}
-	diskProvisioning := "thin"
-	ovfMo := j.EsxiClient.ServiceContent.OvfManager
 	cisp := types.OvfCreateImportSpecParams{
 		OvfManagerCommonParams: types.OvfManagerCommonParams{
 			Locale: "US",
@@ -547,61 +576,108 @@ func (j *Jumpbox) HandleOva(p HandleOvaParams) error {
 		EntityName:       p.Vm.Name,
 		HostSystem:       &p.HostSystem,
 		NetworkMapping:   networkMapping,
-		DiskProvisioning: diskProvisioning,
-		PropertyMapping:  nil,
+		DiskProvisioning: p.Vm.DiskProvisioning,
 	}
+	ovfMo := j.EsxiClient.ServiceContent.OvfManager
 	cisr, err := methods.CreateImportSpec(j.ctx, j.EsxiClient.Client, &types.CreateImportSpec{
 		This:          *ovfMo,
-		OvfDescriptor: ovfInfo.Ovf.Data,
+		OvfDescriptor: p.Ova.Ovf.Data,
 		ResourcePool:  p.RsrcPool,
 		Datastore:     p.Datastore,
 		Cisp:          cisp,
 	})
 	if err != nil {
-		return err
+		return mo, err
 	}
-
-	importVApp := types.ImportVApp{
+	resp, err := methods.ImportVApp(j.ctx, j.EsxiClient.Client, &types.ImportVApp{
 		This:   p.RsrcPool,
 		Spec:   cisr.Returnval.ImportSpec,
-		Folder: &p.Folder,
+		Folder: &p.DcVmFolder,
 		Host:   &p.HostSystem,
-	}
-	resp, err := methods.ImportVApp(j.ctx, j.EsxiClient.Client, &importVApp)
+	})
 	if err != nil {
 		fmt.Println("failed here")
-		return err
+		return mo, err
 	}
-	var lease mo.HttpNfcLease
-	manager := view.NewManager(j.EsxiClient.Client)
-	err = manager.Properties(j.ctx, resp.Returnval, nil, &lease)
+	time.Sleep(1 * time.Second)
+	return resp.Returnval, nil
+}
+
+func (j *Jumpbox) HandleVmdkTransfer(uri, dir string, disks []string, lease *mo.HttpNfcLease, p HandleImportVAppParams) error {
+	url := strings.Replace(uri, "*", j.EsxHostIp, -1)
+	for _, disk := range disks {
+		path := fmt.Sprintf("./%s/%s", dir, disk)
+		payload, err := os.Open(path)
+		if err != nil {
+			fmt.Println("error with disk")
+			return err
+		}
+		requestor := newHttpService(j.EsxHostIp, &j.EsxiClient.Jar)
+		req, err := requestor.GenerateRequest("POST", url, payload)
+		if err != nil {
+			fmt.Println("error generating request")
+			return err
+		}
+		req.Header.Add("Content-Type", "application/x-vnd.vmware-streamVmdk")
+		resp, err := requestor.MakeRequest(req)
+		if err != nil {
+			fmt.Println("error in resp")
+			return err
+		}
+		defer resp.Body.Close()
+		d, _ := ioutil.ReadAll(resp.Body)
+		respText := string(d)
+		if strings.Contains(respText, "Cannot POST") {
+			dc, _ := j.GetDatacenter()
+			ds, _ := j.GetDatastore()
+			j.CpFileToDatastore(CpFileParams{
+				DcName:        dc.Name,
+				DsName:        ds.Name,
+				LocalFilePath: dir,
+				FileName:      disk,
+				DatastoreDir:  fmt.Sprintf("/%s", p.Vm.Name),
+			})
+		}
+	}
+	// Close the Lease for the VAppImport
+	_, err := methods.HttpNfcLeaseComplete(j.ctx, j.EsxiClient.Client, &types.HttpNfcLeaseComplete{
+		This: lease.Self,
+	})
 	if err != nil {
-		fmt.Println("error getting HttpNfcLease Properties")
 		return err
 	}
-	var leaseState string = string(lease.State)
+	return nil
+}
+
+func (j *Jumpbox) HandleLease(moRef types.ManagedObjectReference) (mo.HttpNfcLease, error) {
+	var lease mo.HttpNfcLease
+	m := view.NewManager(j.EsxiClient.Client)
+	err := m.Properties(j.ctx, moRef, nil, &lease)
+	if err != nil {
+		return lease, err
+	}
+	leaseState := string(lease.State)
 LeaseState:
 	for {
 		switch leaseState {
 		case string(types.HttpNfcLeaseStateInitializing):
-			fmt.Println("lease initializing")
 			time.Sleep(2 * time.Second)
 		case string(types.HttpNfcLeaseStateError):
-			fmt.Println("lease error")
-			fmt.Println(lease)
+			err = fmt.Errorf("lease error: %s", string(types.HttpNfcLeaseStateError))
 			break LeaseState
 		case string(types.HttpNfcLeaseStateReady):
 			break LeaseState
 		}
-		lease, err = j.getLease(resp.Returnval)
+		lease, err := j.getLease(moRef)
 		if err != nil {
-			fmt.Println("error getting updated lease")
 			break
 		}
 		leaseState = string(lease.State)
 	}
-	fmt.Println(lease.Info.DeviceUrl)
-	return nil
+	if err != nil {
+		return lease, err
+	}
+	return lease, nil
 }
 
 func (j *Jumpbox) getLease(leaseMo types.ManagedObjectReference) (mo.HttpNfcLease, error) {
@@ -615,11 +691,11 @@ func (j *Jumpbox) getLease(leaseMo types.ManagedObjectReference) (mo.HttpNfcLeas
 	return lease, nil
 }
 
-func (j *Jumpbox) extractOva(path, filename string) (OvfInfo, error) {
-	var ovfInfo OvfInfo
+func (j *Jumpbox) extractOva(path, filename string) (OvaInfo, error) {
+	var ovaInfo OvaInfo
 	f, err := os.Open(fmt.Sprintf("./%s/%s", path, filename))
 	if err != nil {
-		return ovfInfo, err
+		return ovaInfo, err
 	}
 	defer f.Close()
 	var fr io.ReadCloser = f
@@ -657,25 +733,24 @@ OuterLoop:
 		}
 	}
 	if err != nil {
-		return ovfInfo, err
+		return ovaInfo, err
 	}
 	dirEntries, err := os.ReadDir("./" + path)
 	if err != nil {
-		return ovfInfo, err
+		return ovaInfo, err
 	}
 	for _, entry := range dirEntries {
 		switch {
-		case strings.Contains(entry.Name(), "ovf"):
-			ovfInfo.Ovf.FileName = entry.Name()
+		case strings.Contains(entry.Name(), ".ovf"):
+			ovaInfo.Ovf.FileName = entry.Name()
 			ovfFile, _ := os.Open(fmt.Sprintf("./%s/%s", path, entry.Name()))
 			defer ovfFile.Close()
 			d, _ := ioutil.ReadAll(ovfFile)
-			re := regexp.MustCompile(`<vmw:Extra.*\n`)
-			payload := re.ReplaceAllString(string(d), "")
-			ovfInfo.Ovf.Data = string(payload)
-		case strings.Contains(entry.Name(), "vmdk"):
-			ovfInfo.Disks = append(ovfInfo.Disks, entry.Name())
+			ovaInfo.Ovf.Data = string(d)
+		case strings.Contains(entry.Name(), ".vmdk") || strings.Contains(entry.Name(), ".iso"):
+			ovaInfo.Disks = append(ovaInfo.Disks, entry.Name())
 		}
 	}
-	return ovfInfo, nil
+	ovaInfo.Dir = path
+	return ovaInfo, nil
 }
