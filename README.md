@@ -6,14 +6,14 @@
 1. Logout Client
 1. Get HostSystem using Api Wrapper
 ```go
-esxClient := apgjb.NewJumpbox("esx host/ip", "user", "password")
-if err := esxClient.Login(); err != nil {
+esx := gesxi.NewEsxiService("esx host/ip", "user", "password")
+if err := esx.Login(); err != nil {
     // Do something besides moving beyond this line
 }
-defer esxClient.Logout()
+defer esx.Logout()
 // Connecting to a Single ESXi Host
 var host mo.HostSystem
-hosts, err := esxClient.GetHosts()
+hosts, err := esx.GetHosts()
 if err != nil || len(hosts) != 1 {
     // Do Something
 }
@@ -26,7 +26,7 @@ hostNetSysRef := host.ConfigManager.NetworkSystem.Reference()
 1. Get HostNetworkSystemReference (host.ConfigManager.NetworkSystem.Reference())
 1. Create AddPgParams struct
 ```go
-params := apgjb.AddPgParams{
+params := gesxi.AddPgParams{
     HostNetSystemRef: ref,
     PgName:           "Typically VlanID Specific",
     PgVlanId:         int(vlanId),
@@ -42,10 +42,10 @@ err := esxApi.AddPG(params)
 1. Get HostNetworkSystemReference (again)
 1. Create VswitchPostParams and Call VswitchPost Method
 ```go
-params := apgjb.VswitchPostParams{
+params := gesxi.VswitchPostParams{
     // From Step 1
     HostNetSystemRef: ref,
-    Vswitch: apgjb.VswitchOp{
+    Vswitch: gesxi.VswitchOp{
         // Add and/or Modify at the End (ENUM)
         ChangeOp: types.HostConfigChangeOperationAdd,
         Specs: &types.HostVirtualSwitchSpec{
@@ -81,12 +81,28 @@ err = esxApi.MkDir(apgjb.MkDirParams{
 if err != nil {
     log.Fatal(err)
 }
-cpParams := apgjb.CpFileParams{
+cpParams := gesxi.CpFileParams{
     DcName: dcName,
     DsName: dsName,
     LocalFilePath: "absPath to File",
     FileName: "fileName",
     DatastoreDir: "FolderToUploadFileTo",
+    RemoteFileName: "",
 }
 err := esxApi.CpFileToDatastore(cpParams)
 ```
+
+### OVA/OFV Operations
+1. Get Information from ESXi Host
+    a. Datastore
+    b. Datacenter
+    c. Resource Pool
+    d. HostSystem
+    e. NetworkSystem
+1. Define OVA Parameters including Folder and Filename of OVA
+1. Extract OVA file
+1. ImportVApp
+1. Handle VApp Lease (in order to Upload Disks [vmdk] to Datastore)
+1. Upload files
+1. Other Misc Tasks
+1. Power on VirtualMachine/VApp
