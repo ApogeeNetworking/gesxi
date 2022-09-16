@@ -580,7 +580,7 @@ func (s *EsxiService) ImportVApp(p HandleImportVAppParams) (types.ManagedObjectR
 	cisp := types.OvfCreateImportSpecParams{
 		OvfManagerCommonParams: types.OvfManagerCommonParams{
 			Locale:           "US",
-			DeploymentOption: "4CPU-8GB",
+			DeploymentOption: p.Vm.DeploymentOptions,
 		},
 		EntityName:       p.Vm.Name,
 		HostSystem:       &p.HostSystem,
